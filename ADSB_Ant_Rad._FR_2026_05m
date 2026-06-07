@@ -1,0 +1,85 @@
+clear; close all; clc;
+
+c = 3e8;
+f = 1090e6;
+lambda = c/f;
+k = 2*pi/lambda;
+
+phi = linspace(-pi/2, pi/2, 3600);
+
+% Element pattern: half-wave dipole
+E_elem = zeros(size(phi));
+for i = 1:length(phi)
+    cp = cos(phi(i));
+    if abs(cp) > 0.005
+        E_elem(i) = abs(cos((pi/2)*sin(phi(i))) / cp);
+    else
+        E_elem(i) = 0;
+    end
+end
+E_elem = E_elem / max(E_elem);
+
+% Array factor setup
+N_vals = [2, 3, 4];
+d = lambda/2;
+
+% Figure with tiled layout
+figure('Name','Collinear sweep','Color','k');
+t = tiledlayout(1,3,'TileSpacing','compact','Padding','compact');
+t.Title.String = 'FlightAware collinear — N element sweep';
+t.Title.Color = 'w';
+
+% ONE loop that calculates AND plots
+for ni = 1:3
+    N = N_vals(ni);
+
+    % Phasor sum
+    AF = zeros(size(phi));
+    for i = 1:length(phi)
+        psi = k * d * sin(phi(i));
+        total = 0;
+        for n = 0:N-1
+            total = total + exp(1j*n*psi);
+        end
+        AF(i) = abs(total);
+    end
+    AF = AF / max(AF);
+
+    % Total pattern
+    E_total = E_elem .* AF;
+    E_total = E_total / max(E_total);
+
+    % Mirror for full donut
+    phi_full = [phi, pi - fliplr(phi)];
+    E_full   = [E_total, fliplr(E_total)];
+
+    % HPBW
+    hp_idx = find(E_total >= 0.707);
+    if ~isempty(hp_idx)
+        hpbw = (phi(hp_idx(end)) - phi(hp_idx(1))) * 180/pi;
+    else
+        hpbw = NaN;
+    end
+
+    % Gain
+    dphi = phi(2) - phi(1);
+    power = sum(E_total.^2 .* cos(phi)) * dphi;
+    gain_dBi = 10*log10(2/power);
+
+    % Plot — all inside the same loop iteration
+    nexttile;
+    ax = polaraxes;
+    polarplot(ax, phi_full, E_full, 'b-', 'LineWidth', 2);
+    ax.Color = 'k';
+    ax.ThetaZeroLocation = 'right';
+    ax.ThetaDir = 'counterclockwise';
+    ax.RLim = [0 1];
+    ax.ThetaTick = [0 30 60 90 120 150 180 210 240 270 300 330];
+    ax.ThetaTickLabel = {'0','30','60','90','120','150',...
+                         '180','210','240','270','300','330'};
+    ax.GridColor = [0.4 0.4 0.4];
+    ax.ThetaColor = 'w';
+    ax.RColor = 'w';
+    title(ax, sprintf('N=%d  |  HPBW≈%.0f°  |  gain≈%.1f dBi', ...
+        N, hpbw, gain_dBi), 'Color', 'w', 'FontSize', 10);
+end

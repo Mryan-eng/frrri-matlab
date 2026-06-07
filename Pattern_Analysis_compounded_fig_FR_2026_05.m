@@ -1,0 +1,261 @@
+% =========================================================================
+% FRRRI_PatternAnalysis.m
+% Front Range RF Research Initiative
+% Tram 1411 Discone + ADS-B Antenna — Elevation Pattern & Isolation Study
+%
+% M. Smith, AF0FO — May 2026
+%
+% Model: monopole approximation (exact NEC would refine but captures all
+% key physics: lobe formation, elevation angle shift, multi-lobe onset)
+%
+% Antenna geometry from Tram 1411 instruction sheet (Model 1411): approx
+%   Whip:         1397 mm = 1.397 m (2-piece, center-loaded)
+%   Upper radials: 286 mm x8, horizontal
+%   Lower radials: 832 mm x6, at 45 deg
+%   Tuning radials: 832 mm x2, with coil
+%
+% ADS-B antenna modeled as 5/8-wave collinear at 1090 MHz
+%   Effective length: 172 mm = 0.172 m
+% =========================================================================
+ 
+close all; clear; clc;
+ 
+%% ---- Constants & antenna parameters ------------------------------------
+c      = 3e8;        % speed of light, m/s
+H_TRAM = 1.397;      % Tram 1411 whip length, m
+H_ADSB = 0.172;      % ADS-B effective length (5/8-wave at 1090 MHz), m
+ 
+%% ---- Frequencies of interest -------------------------------------------
+freqs_sweep = [50, 88, 100, 121, 137, 162, 300, 433, 868, 1090];
+freq_labels  = {'50 MHz','88 MHz (FM)','100 MHz (FM)','121 MHz (Air)',...
+                '137 MHz (NOAA)','162 MHz (WX)','300 MHz','433 MHz (ISM)',...
+                '868 MHz','1090 MHz (ADS-B)'};
+colors_sweep = lines(length(freqs_sweep));
+ 
+%% ---- Figure 1: Overlay all Tram 1411 patterns on one polar plot ---------
+figure('Name','Fig 1 — Tram 1411 pattern overlay','Position',[50 50 720 620]);
+ 
+ax1 = polaraxes;
+hold(ax1,'on');
+ 
+for i = 1:length(freqs_sweep)
+    [phi_full, E_full] = fullElevPattern(freqs_sweep(i), H_TRAM, c);
+    polarplot(ax1, phi_full, E_full, ...
+        'Color', colors_sweep(i,:), 'LineWidth', 1.6, ...
+        'DisplayName', freq_labels{i});
+end
+ 
+ax1.ThetaZeroLocation  = 'right';
+ax1.ThetaDir           = 'counterclockwise';
+ax1.ThetaTick    = 0:30:330;
+ax1.ThetaTickLabel     = {'0° Horiz','30°','60°','90° Zenith','120°',...
+                           '150°','180° Horiz','210°','240°',...
+                           '270° Nadir','300°','330°'};
+ax1.RLim               = [0 1];
+ax1.RTickLabel         = {'0','.25','.5','.75','1'};
+title(ax1, 'Tram 1411 — elevation pattern at 10 frequencies (normalized)');
+legend(ax1, 'Location','southoutside','NumColumns',3,'FontSize',8);
+hold(ax1,'off');
+ 
+%% ---- Figure 2: Individual subplots per frequency ------------------------
+figure('Name','Fig 2 — Tram 1411 per-frequency','Position',[50 50 960 720]);
+ 
+ncols = 5; nrows = 2;
+for i = 1:length(freqs_sweep)
+    [phi_full, E_full] = fullElevPattern(freqs_sweep(i), H_TRAM, c);
+    
+    ax = subplot(nrows, ncols, i);
+    pax = polaraxes('Parent', ax.Parent, 'Position', ax.Position);
+    delete(ax);
+    
+    polarplot(pax, phi_full, E_full, 'Color', colors_sweep(i,:), 'LineWidth', 2);
+    pax.ThetaZeroLocation  = 'right';
+    pax.ThetaDir           = 'counterclockwise';
+    pax.ThetaTick    = [0, 90, 180, 270];
+    pax.ThetaTickLabel     = {'H','Z','H','N'};
+    pax.RTickLabel         = {};
+    pax.RLim               = [0 1];
+    title(pax, freq_labels{i}, 'FontSize', 9);
+end
+ 
+sgtitle('Tram 1411 — elevation cuts  (H = horizon, Z = zenith, N = nadir)');
+ 
+%% ---- Figure 3: ADS-B antenna pattern at 1090 MHz --------
+figure('Name','Fig 3 — ADS-B pattern at 1090 MHz','Position',[100 100 500 500]);
+ 
+[phi_tram1090, E_tram1090] = fullElevPattern(1090, H_TRAM, c);
+[phi_adsb,     E_adsb]     = fullElevPattern(1090, H_ADSB, c);
+ 
+ax3 = polaraxes;
+hold(ax3,'on');
+polarplot(ax3, phi_tram1090, E_tram1090, 'b-', 'LineWidth', 2.0, ...
+    'DisplayName', 'Tram 1411 whip @ 1090 MHz');
+polarplot(ax3, phi_adsb,     E_adsb,     'g-', 'LineWidth', 2.0, ...
+    'DisplayName', 'ADS-B antenna @ 1090 MHz');
+ 
+ax3.ThetaZeroLocation = 'right';
+ax3.ThetaDir          = 'counterclockwise';
+ax3.ThetaTick   = [0, 90, 180, 270];
+ax3.ThetaTickLabel    = {'Horizon','Zenith','Horizon','Nadir'};
+ax3.RLim              = [0 1];
+title(ax3,'Pattern comparison at 1090 MHz (ADS-B operating frequency)');
+legend(ax3,'Location','southoutside');
+hold(ax3,'off');
+ 
+%% ---- Figure 4: Isolation vs separation distance ---
+figure('Name','Fig 4 — Isolation vs separation','Position',[100 100 750 450]);
+ 
+sep_m       = logspace(log10(0.1), log10(5), 300);
+iso_freqs   = [88, 100, 137, 162, 300, 1090];
+iso_labels  = {'88 MHz (FM)','100 MHz (FM)','137 MHz (NOAA)',...
+               '162 MHz (WX)','300 MHz','1090 MHz (ADS-B)'};
+iso_colors  = lines(length(iso_freqs));
+ 
+hold on;
+for i = 1:length(iso_freqs)
+    lambda  = c / (iso_freqs(i)*1e6);
+    ratio   = sep_m / lambda;
+    iso_dB  = max(6, min(50, 22 + 20*log10(max(ratio, 0.04))));
+    plot(sep_m, iso_dB, 'Color', iso_colors(i,:), 'LineWidth', 2, ...
+        'DisplayName', iso_labels{i});
+end
+ 
+yline(20, 'r--', '20 dB target', 'LineWidth', 2, ...
+    'LabelHorizontalAlignment','left', 'FontSize', 10);
+ 
+xlabel('Separation distance (m)','FontSize',11);
+ylabel('Isolation (dB)','FontSize',11);
+title('Co-polarized vertical antenna isolation vs. separation (free-space approx)','FontSize',11);
+legend('Location','southeast','FontSize',9);
+grid on;
+set(gca,'XScale','log','XMinorGrid','on');
+xlim([0.1 5]);
+ylim([0 52]);
+xticks([0.1 0.2 0.5 1 2 5]);
+xticklabels({'0.1','0.2','0.5','1.0','2.0','5.0'});
+hold off;
+ 
+%% ---- Figure 5: Minimum separation needed for 20 dB at each frequency --
+figure('Name','Fig 5 — Min separation vs frequency','Position',[100 100 700 380]);
+ 
+freq_range = 25:5:1300;
+sep_20_m   = zeros(size(freq_range));
+ 
+for i = 1:length(freq_range)
+    lambda       = c / (freq_range(i)*1e6);
+    sep_20_m(i)  = lambda * 10^((20-22)/20);
+end
+ 
+semilogy(freq_range, sep_20_m, 'b-', 'LineWidth', 2.5);
+hold on;
+yline(1.5, 'k--', '1.5 m (single mast height)', 'FontSize', 9);
+yline(2.4, 'r--', '2.4 m (two-mast horizontal)', 'FontSize', 9);
+ 
+xlabel('Frequency (MHz)','FontSize',11);
+ylabel('Min separation for 20 dB isolation (m)','FontSize',11);
+title('Required antenna separation for 20 dB isolation vs. frequency','FontSize',11);
+grid on;
+set(gca,'YScale','log');
+xlim([25 1300]);
+ylim([0.03 20]);
+ 
+% Mark key bands
+xregion(88,  108, 'FaceColor',[0.9 0.8 0.8],'FaceAlpha',0.4);
+xregion(108, 137, 'FaceColor',[0.8 0.9 0.8],'FaceAlpha',0.4);
+xregion(137, 175, 'FaceColor',[0.8 0.8 0.9],'FaceAlpha',0.4);
+ 
+text(95,  12, 'FM', 'FontSize',8,'Color',[0.6 0.2 0.2],'HorizontalAlignment','center');
+text(122, 12, 'Air', 'FontSize',8,'Color',[0.2 0.5 0.2],'HorizontalAlignment','center');
+text(156, 12, 'VHF','FontSize',8,'Color',[0.2 0.2 0.6],'HorizontalAlignment','center');
+hold off;
+ 
+%% ---- Console output: summary table ------------------------------------
+fprintf('\n=================================================================\n');
+fprintf(' Tram 1411 Pattern Summary (monopole approximation)\n');
+fprintf('=================================================================\n');
+fprintf('%-12s %-10s %-10s %-14s %-8s\n',...
+    'Freq (MHz)','Lambda (m)','kh (rad)','Peak elev (deg)','Lobes');
+fprintf('-----------------------------------------------------------------\n');
+ 
+for i = 1:length(freqs_sweep)
+    f      = freqs_sweep(i);
+    lambda = c / (f*1e6);
+    kh     = 2*pi*H_TRAM/lambda;
+    E_vals = elevPatternHalf(f, H_TRAM, c);
+    elev_v = linspace(0, 90, length(E_vals));
+    [~,idx] = max(E_vals);
+    pk     = elev_v(idx);
+    
+    E_all    = [elevPatternHalf(f, H_TRAM, c), fliplr(elevPatternHalf(f, H_TRAM, c))];
+    n_lobes  = countLobes(E_all);
+    
+    fprintf('%-12d %-10.3f %-10.2f %-14.1f %-8d\n', f, lambda, kh, pk, n_lobes);
+end
+ 
+fprintf('\n=================================================================\n');
+fprintf(' Min separation for 20 dB isolation\n');
+fprintf('=================================================================\n');
+fprintf('%-12s %-15s %-20s\n','Freq (MHz)','Lambda (m)','Min separation (m)');
+fprintf('-----------------------------------------------------------------\n');
+for i = 1:length(iso_freqs)
+    lambda  = c / (iso_freqs(i)*1e6);
+    sep20   = lambda * 10^((20-22)/20);
+    fprintf('%-12d %-15.3f %-20.3f\n', iso_freqs(i), lambda, sep20);
+end
+fprintf('=================================================================\n\n');
+ 
+fprintf(' KEY FINDING:\n');
+fprintf(' FM band (88-108 MHz) is the binding constraint.\n');
+fprintf(' 20 dB isolation requires ~2.3-2.5 m separation at FM.\n');
+fprintf(' At 1090 MHz (ADS-B), even 0.27 m achieves 20 dB.\n');
+fprintf(' Recommendation: two-mast horizontal layout, 2.5 m separation.\n\n');
+ 
+%% =========================================================================
+%  LOCAL FUNCTIONS (requires MATLAB R2016b or later)
+% =========================================================================
+ 
+function E = elevPatternHalf(freq_MHz, h_m, c)
+    % Returns normalized E-field magnitude for elevation 0 to 90 degrees
+    k    = 2*pi*freq_MHz*1e6/c;
+    kh   = k * h_m;
+    elev = linspace(0, 90, 181);
+    phi  = elev * pi/180;
+    E    = zeros(size(phi));
+    for i = 1:length(phi)
+        cp = cos(phi(i));
+        if abs(cp) > 0.015
+            E(i) = abs((cos(kh*sin(phi(i))) - cos(kh)) / cp);
+        end
+    end
+    mx = max(E);
+    if mx > 1e-12; E = E / mx; end
+end
+ 
+function [phi_full, E_full] = fullElevPattern(freq_MHz, h_m, c)
+    % Returns full elevation pattern (phi in radians, E normalized)
+    % for use with polarplot
+    % Convention: 0 rad = horizon right, pi/2 = zenith, pi = horizon left
+    E_half   = elevPatternHalf(freq_MHz, h_m, c);
+    elev_deg = linspace(0, 90, length(E_half));
+    phi_half = elev_deg * pi/180;
+    
+    % Right half: 0 to pi/2 (horizon to zenith)
+    % Left half:  pi/2 to pi then continue to 3pi/2 (zenith to horizon to nadir)
+    % Mirror for full donut slice
+    phi_full = [phi_half, pi - fliplr(phi_half), ...
+                pi + phi_half, 2*pi - fliplr(phi_half)];
+    E_full   = [E_half, fliplr(E_half), E_half, fliplr(E_half)];
+end
+ 
+function n = countLobes(E_norm)
+    % Count elevation lobes above 35% of peak (upper hemisphere only)
+    half     = E_norm(1:ceil(length(E_norm)/2));
+    n        = 0;
+    in_lobe  = false;
+    for i = 1:length(half)
+        if half(i) > 0.35 && ~in_lobe; n = n+1; in_lobe = true; end
+        if half(i) <= 0.35; in_lobe = false; end
+    end
+    n = max(1, n);
+end
+ 
